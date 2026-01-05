@@ -156,8 +156,8 @@ def get_records_df(records):
     return pd.DataFrame.from_records(records).sort_values(by=["clip_similarity"], ascending=False).reset_index(drop=True)
 
 def main():
-    user_query = "croissant"
-    video_path = "video5.mp4"
+    user_query = "glasses"
+    video_path = "video3.mp4"
     k = 3
     
     records = []
