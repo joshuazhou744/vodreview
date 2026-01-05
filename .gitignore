@@ -1,0 +1,5 @@
+vid*
+yolov8n.pt
+results.csv
+.venv
+__pycache__
