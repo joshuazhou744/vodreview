@@ -5,3 +5,5 @@ Tool to detect objects in a video. Optimized for longer content (VODs) and gener
 ## (WIP) YOLO-World
 
 YOLO-World for more dynamic labels and a more compact pipeline that doesn't need CLIP + YOLO.
+
+Note: YOLO-World does use a CLIP-like text encoder to align prompts with visual features.

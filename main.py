@@ -1,44 +1,27 @@
+# simplification of main.py using yolo world rather than yolo + clip
+# ** requires a gpu for reasonable performance **
+# uses requirements.txt packages
+
+# imports
+import supervision as sv
+from inference.models.yolo_world.yolo_world import YOLOWorld
+
 import json
 import subprocess
-import sys
 import numpy as np
-import torch
-from ultralytics import YOLO
-from PIL import Image
-import clip
 import pandas as pd
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-clip_model, clip_preprocess = clip.load("ViT-B/32", device=device)
-yolo_model = YOLO("yolov8n.pt")
+MODEL_ID = "yolo_world/m" # model id
 
-CLIP_BATCH_SIZE = 64
-buffer = []
+model = YOLOWorld(model_id=MODEL_ID)
 
-def flush_buffer(buffer, query_embedding):
-    if not buffer:
-        return []
-    
-    clip_inputs = [clip_preprocess(Image.fromarray(d["crop"])) for d in buffer]
-    clip_batch = torch.stack(clip_inputs).to(device)
+def download_video():
+    # TODO: implenent video download based on the object storage service i use
+    pass
 
-    with torch.inference_mode():
-        image_embedding = clip_model.encode_image(clip_batch)
-        image_embedding /= image_embedding.norm(dim=-1, keepdim=True)
-        sims = (image_embedding @ query_embedding.T).squeeze(1).cpu().numpy()
-
-    results = []
-    for d, s in zip(buffer, sims):
-        results.append({
-            "label": d["label"],
-            "yolo_conf": d["yolo_conf"],
-            "crop": d["crop"],
-            "clip_similarity": float(s),
-            "timestamp": d["timestamp"],
-        })
-    return results
-
+# get video info
 def ffprobe_video(path: str) -> dict:
+    # return info about video
     cmd = [
         "ffprobe",
         "-v",
@@ -46,26 +29,26 @@ def ffprobe_video(path: str) -> dict:
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height,avg_frame_rate",
+        "stream=width,height", # width and height info
         "-of",
-        "json",
+        "json", # output format
         path,
     ]
-    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    result = subprocess.run(cmd, check=True, capture_output=True)
     data = json.loads(result.stdout)
-    return data["streams"][0]
+    streams = data.get("streams", [])
+    if not streams:
+        raise RuntimeError(f"ffprobe returned no video streams for: {path}")
+    return streams[0]
 
 
-def parse_fps(avg_frame_rate: str) -> float:
-    num, den = avg_frame_rate.split("/")
-    return float(num) / float(den)
-
-
+# iterate frames from video using ffmpeg
 def iter_frames_ffmpeg(path: str, fps: float = 1):
+    if fps <= 0:
+        raise ValueError("fps must be > 0")
     info = ffprobe_video(path)
     width = int(info["width"])
     height = int(info["height"])
-    _fps = parse_fps(info["avg_frame_rate"])
 
     frame_size = width * height * 3  # rgb24
     cmd = [
@@ -80,132 +63,73 @@ def iter_frames_ffmpeg(path: str, fps: float = 1):
         "rgb24",
         "pipe:1",
     ]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.stdout is None:
+        raise RuntimeError("ffmpeg stdout pipe was not created")
 
     idx = 0
     while True:
         raw = proc.stdout.read(frame_size)
         if len(raw) < frame_size:
             break
-        timestamp = idx / float(fps)
-        yield raw, width, height, timestamp, _fps
+        time_s = idx / float(fps)
+        yield raw, width, height, time_s
         idx += 1
 
     proc.stdout.close()
-    proc.wait()
-
-def process_frame(frame, similar_labels, timestamp):
-    results = yolo_model(frame, conf=0.3, verbose=False)[0]
     
-    detections = []
+    # check ffmpeg error
+    stderr = proc.stderr.read()
+    proc.stderr.close()
+    code = proc.wait()
+    if code != 0:
+        err_text = stderr.decode("utf-8", errors="replace")
+        raise RuntimeError(f"ffmpeg failed with code {code}: {err_text}")
 
-    for box in results.boxes:
-        # get class label
-        cls_id = int(box.cls[0])
-        label = yolo_model.names[cls_id]
+# format seconds to mm:ss
+def format_mmss(seconds: float) -> str:
+    total = int(seconds)
+    minutes, secs = divmod(total, 60)
+    return f"{minutes:02d}:{secs:02d}"
 
-        # don't process if label not similar
-        if label not in similar_labels:
-            continue
+def main(
+        classes: list[str],
+        input_video_path: str,
+        confidence: float = 0.08,
+        nms: float = 0.3,
+        debug_level: int = 0,
+    ):
+    if not classes:
+        raise ValueError("classes must contain at least one label")
+    model.set_classes(classes)
 
-        # get border box of the detected object
-        x1, y1, x2, y2 = map(int, box.xyxy[0])
-        # get confidence score
-        conf = float(box.conf[0])
-
-        # crop image
-        crop = frame[y1:y2, x1:x2]
-        if crop.size == 0:
-            continue
-
-        # append this detected object
-        detections.append({
-            "crop": crop,
-            "label": label,
-            "yolo_conf": conf,
-            "timestamp": timestamp
-        })
-
-    return detections
-
-def score_with_clip(detections, query_embedding, timestamp):
-    clip_inputs = [clip_preprocess(Image.fromarray(d["crop"])) for d in detections]
-    clip_batch = torch.stack(clip_inputs).to(device)
-    with torch.inference_mode():
-        image_emb = clip_model.encode_image(clip_batch)
-        image_emb /= image_emb.norm(dim=-1, keepdim=True)
-        sims = (image_emb @ query_embedding.T).squeeze(1).cpu().numpy()
-
-    results = []
-    for d, s in zip(detections, sims):
-        results.append({
-            "label": d["label"],
-            "yolo_conf": d["yolo_conf"],
-            "crop": d["crop"],
-            "clip_similarity": float(s),
-            "timestamp": timestamp,
-        })
-    return results
-
-def compute_similar_labels(labels, label_embeddings, query_embedding, k=3):
-    sims = (query_embedding @ label_embeddings.T).squeeze(0)
-    topk = torch.topk(sims, k=k).indices.tolist()
-    return { labels[i] for i in topk }
-
-def get_records_df(records):
-    return pd.DataFrame.from_records(records).sort_values(by=["clip_similarity"], ascending=False).reset_index(drop=True)
-
-def main():
-    user_query = "glasses"
-    video_path = "video3.mp4"
-    k = 3
-    
     records = []
-    frame_count = 0
 
-    with torch.inference_mode():
-        text_tokens = clip.tokenize([user_query]).to(device)
-        query_embedding = clip_model.encode_text(text_tokens)
-        query_embedding /= query_embedding.norm(dim=-1, keepdim=True)
+    for raw, w, h, time_s in iter_frames_ffmpeg(input_video_path, fps=2):
+        frame = np.frombuffer(raw, np.uint8).reshape((h, w, 3))
 
-        labels = list(yolo_model.names.values())    
-        label_tokens = clip.tokenize(labels).to(device)
-        label_embeddings = clip_model.encode_text(label_tokens)
-        label_embeddings /= label_embeddings.norm(dim=-1, keepdim=True)
+        results = model.infer(frame, confidence=confidence)
+        det = sv.Detections.from_inference(results).with_nms(nms)
 
-        similar_labels = compute_similar_labels(labels, label_embeddings, query_embedding, k)
+        for xyxy, conf, cls in zip(det.xyxy, det.confidence, det.class_id):
+            records.append({
+                "label": classes[int(cls)],
+                "confidence": float(conf),
+                "bbox": tuple(map(float, xyxy)),
+                "timestamp_s": time_s,
+                "timestamp": format_mmss(time_s),
+            })
 
-    for _raw, _w, _h, _ts, _src_fps in iter_frames_ffmpeg(video_path, fps=2):
-        frame = np.frombuffer(_raw, np.uint8).reshape((_h, _w, 3))
+    # print out records sorted by confidence
+    if records and debug_level == 1:
+        records_df = pd.DataFrame.from_records(records)
+        print(records_df.sort_values(by=["confidence"], ascending=False))
+    elif debug_level == 1:
+        print("No detections found.")
 
-        detections = process_frame(frame, similar_labels, _ts)
-
-        # if detections:
-        #     scored = score_with_clip(detections, query_embedding, _ts)
-        #     records.extend(scored)
-
-        if detections:
-            buffer.extend(detections)
-            if len(buffer) >= CLIP_BATCH_SIZE:
-                records.extend(flush_buffer(buffer, query_embedding))
-
-        frame_count += 1
-    
-    # flush leftover buffer
-    records.extend(flush_buffer(buffer, query_embedding))
-    
-    
-    records_df = get_records_df(records)
-    print(records_df)
-    print(f"Read {frame_count} frames.")
-
+    return records
 
 if __name__ == "__main__":
-    import time
-    start = time.perf_counter()
-
-    main()
-
-    end = time.perf_counter()
-    print(f"Elapsed: {end - start:.2f}s")
-
+    classes = ["person"]
+    input_video_path = "video.mp4"
+    main(classes, input_video_path, debug_level=1)
