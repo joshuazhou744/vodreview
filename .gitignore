@@ -1,5 +1,6 @@
-vid*
-yolov8n.pt
-results.csv
-.venv
-__pycache__
+backend/video*
+backend/yolov8n.pt
+backend/*.csv
+backend/.venv
+backend/__pycache__
+.vscode/

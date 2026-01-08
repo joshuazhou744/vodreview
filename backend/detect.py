@@ -1,4 +1,4 @@
-# simplification of main.py using yolo world rather than yolo + clip
+# simplification using yolo world rather than yolo + clip
 # ** requires a gpu for reasonable performance **
 # uses requirements.txt packages
 
@@ -14,10 +14,6 @@ import pandas as pd
 MODEL_ID = "yolo_world/m" # model id
 
 model = YOLOWorld(model_id=MODEL_ID)
-
-def download_video():
-    # TODO: implenent video download based on the object storage service i use
-    pass
 
 # get video info
 def ffprobe_video(path: str) -> dict:
@@ -43,7 +39,7 @@ def ffprobe_video(path: str) -> dict:
 
 
 # iterate frames from video using ffmpeg
-def iter_frames_ffmpeg(path: str, fps: float = 1):
+def iter_frames_ffmpeg(path: str, fps: float = 2):
     if fps <= 0:
         raise ValueError("fps must be > 0")
     info = ffprobe_video(path)
@@ -92,10 +88,11 @@ def format_mmss(seconds: float) -> str:
     minutes, secs = divmod(total, 60)
     return f"{minutes:02d}:{secs:02d}"
 
-def main(
+def detect_records(
         classes: list[str],
         input_video_path: str,
-        confidence: float = 0.08,
+        fps: float = 2,
+        confidence: float = 0.3,
         nms: float = 0.3,
         debug_level: int = 0,
     ):
@@ -105,7 +102,7 @@ def main(
 
     records = []
 
-    for raw, w, h, time_s in iter_frames_ffmpeg(input_video_path, fps=2):
+    for raw, w, h, time_s in iter_frames_ffmpeg(input_video_path, fps=fps):
         frame = np.frombuffer(raw, np.uint8).reshape((h, w, 3))
 
         results = model.infer(frame, confidence=confidence)
@@ -129,7 +126,8 @@ def main(
 
     return records
 
+# testing
 if __name__ == "__main__":
     classes = ["person"]
     input_video_path = "video.mp4"
-    main(classes, input_video_path, debug_level=1)
+    detect_records(classes, input_video_path, debug_level=1)

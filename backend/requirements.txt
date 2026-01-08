@@ -1,0 +1,4 @@
+pandas==2.3.3
+inference==0.63.4
+supervision==0.27.0
+ultralytics==8.3.249
