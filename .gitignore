@@ -1,4 +1,4 @@
-backend/video*
+backend/*.mp4
 backend/yolov8n.pt
 backend/*.csv
 backend/.venv

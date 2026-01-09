@@ -2,10 +2,11 @@ import pandas as pd
 
 def parse_records_for_clips(
         records: list[dict],
-        max_gap_s: float = 0.5,
-        min_clip_duration: float = 0.25,
+        fps: float,
+        max_gap_s: float = 2.0,
+        min_clip_duration: float = 0.5,
         max_clip_duration: float = 20.0,
-        min_records_in_clip: int = 2
+        min_records_in_clip: int = 2,
     ) -> dict:
     # dictionary to store clips
     clips = {}
@@ -37,25 +38,47 @@ def parse_records_for_clips(
             if item["timestamp_s"] - prev["timestamp_s"] <= max_gap_s:
                 current_cluster.append(item)
             else:
-                if check_cluster(current_cluster, min_clip_duration=min_clip_duration, min_records_in_clip=min_records_in_clip):
-                    label_clips.append(current_cluster)
+                if check_cluster(current_cluster, min_clip_duration=min_clip_duration, min_records_in_clip=min_records_in_clip, fps=fps):
+                    label_clips.append(cluster_to_clip(current_cluster, fps))
                 current_cluster = [item]
             # item get iterated to next but prev stays the current item
             prev = item
 
         # check for leftover cluster
-        if check_cluster(current_cluster, min_clip_duration=min_clip_duration, min_records_in_clip=min_records_in_clip):
-            label_clips.append(current_cluster)
+        if check_cluster(current_cluster, min_clip_duration=min_clip_duration, min_records_in_clip=min_records_in_clip, fps=fps):
+            label_clips.append(cluster_to_clip(current_cluster, fps))
         
         clips[label] = label_clips
     return clips
 
-def check_cluster(cluster, min_clip_duration, min_records_in_clip):
+def cluster_to_clip(cluster, fps):
+    start_s = cluster[0]["timestamp_s"]
+    end_s = cluster[-1]["timestamp_s"] + (1.0 / fps)
+    duration_s = end_s - start_s
+    avg_confidence = sum(r["confidence"] for r in cluster) / len(cluster)
+    
+    return {
+        "label": cluster[0]["label"],
+        "duration_s": duration_s,
+        "duration": format_mmss(duration_s),
+        "starttime": format_mmss(start_s),
+        "start_s": start_s, # will also be used for thumbnail
+        "end_s": end_s,
+        "record_count": len(cluster),
+        "avg_confidence": avg_confidence,
+    }
+
+def check_cluster(cluster, min_clip_duration, min_records_in_clip, fps):
     if not cluster:
         return False
-    duration = cluster[-1]["timestamp_s"] - cluster[0]["timestamp_s"]
-    return duration >= min_clip_duration and len(cluster) >= min_records_in_clip
+    duration_s = cluster[-1]["timestamp_s"] - cluster[0]["timestamp_s"] + (1.0 / fps)
+    return duration_s >= min_clip_duration and len(cluster) >= min_records_in_clip
 
+# format seconds to mm:ss
+def format_mmss(seconds: float) -> str:
+    total = int(seconds)
+    minutes, secs = divmod(total, 60)
+    return f"{minutes:02d}:{secs:02d}"
 
 def get_clip_thumbnail(clip: dict, video_path: str) -> list[dict]:
     return
@@ -66,5 +89,12 @@ def create_clip(clip: dict, video_path: str) -> list[dict]:
 if __name__ == "__main__":
     df = pd.read_csv("records.csv")
     records = df.to_dict(orient="records")
-    clips = parse_records_for_clips(records)
-    print(clips)
+    clips = parse_records_for_clips(
+        records,
+        fps=4,
+    )
+
+
+    for label, clip_list in clips.items():
+        df = pd.DataFrame(clip_list)
+        print(df)

@@ -15,3 +15,6 @@ After `detect.py` gets the records with timestamps and confidence levels, we nee
 
 ## Old pipeline
 `old_version.py` is the legacy YOLOv8 + CLIP pipeline for mapping a free-form query to YOLO labels and scoring detections with CLIP.
+
+
+

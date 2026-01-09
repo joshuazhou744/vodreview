@@ -10,8 +10,9 @@ import json
 import subprocess
 import numpy as np
 import pandas as pd
+import time
 
-MODEL_ID = "yolo_world/m" # model id
+MODEL_ID = "yolo_world/l" # model id
 
 model = YOLOWorld(model_id=MODEL_ID)
 
@@ -89,28 +90,31 @@ def format_mmss(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 def detect_records(
-        classes: list[str],
+        label: str,
         input_video_path: str,
         fps: float = 2,
         confidence: float = 0.3,
         nms: float = 0.3,
         debug_level: int = 0,
     ):
-    if not classes:
-        raise ValueError("classes must contain at least one label")
-    model.set_classes(classes)
+    start = time.perf_counter()
+    if not label:
+        raise ValueError("you must give a valid label string")
+    model.set_classes([label])
 
     records = []
 
     for raw, w, h, time_s in iter_frames_ffmpeg(input_video_path, fps=fps):
         frame = np.frombuffer(raw, np.uint8).reshape((h, w, 3))
+        # rgb -> bgr shift
+        frame = frame[:, :, ::-1] # (h, w, c) keep all height and width values, reverse the rgb -> bgr
 
         results = model.infer(frame, confidence=confidence)
         det = sv.Detections.from_inference(results).with_nms(nms)
 
-        for xyxy, conf, cls in zip(det.xyxy, det.confidence, det.class_id):
+        for xyxy, conf in zip(det.xyxy, det.confidence):
             records.append({
-                "label": classes[int(cls)],
+                "label": label,
                 "confidence": float(conf),
                 "bbox": tuple(map(float, xyxy)),
                 "timestamp_s": time_s,
@@ -119,15 +123,16 @@ def detect_records(
 
     # print out records sorted by confidence
     if records and debug_level == 1:
-        records_df = pd.DataFrame.from_records(records)
-        print(records_df.sort_values(by=["confidence"], ascending=False))
+        # records_df = pd.DataFrame.from_records(records)
+        # print(records_df.sort_values(by=["confidence"], ascending=False))
+        print(time.perf_counter())
     elif debug_level == 1:
         print("No detections found.")
 
     return records
 
 # testing
-if __name__ == "__main__":
-    classes = ["person"]
-    input_video_path = "video.mp4"
-    detect_records(classes, input_video_path, debug_level=1)
+# if __name__ == "__main__":
+#     classes = ["person"]
+#     input_video_path = "video.mp4"
+#     detect_records(classes, input_video_path, debug_level=1)

@@ -8,9 +8,9 @@ def download_video():
     pass
 
 if __name__ == "__main__":
-    video_path = "video.mp4"
-    classes = ["phone", "toothbrush"]
+    video_path = "vod.mp4"
+    label = "dog"
 
-    records = detect_records(classes, video_path, fps=4, confidence=0.1)
+    records = detect_records(label, video_path, fps=1, confidence=0.2)
     records_df = pd.DataFrame(records)
     records_df.to_csv("records.csv", index=False)
