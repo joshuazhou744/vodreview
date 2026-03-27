@@ -1,8 +1,8 @@
-from icrawler.builtin import GoogleImageCrawler
+from icrawler.builtin import BingImageCrawler, GoogleImageCrawler
 import os
 import glob
 
-def scrape_images(prompt, max_images=100, output_dir=None):
+def scrape_images(prompt, max_images=100, output_dir=None, engine="bing"):
     if not prompt:
         raise ValueError("prompt cannot be empty")
     
@@ -11,7 +11,11 @@ def scrape_images(prompt, max_images=100, output_dir=None):
         output_dir = os.path.join("datasets", safe_name, "images")
 
     os.makedirs(output_dir, exist_ok=True)
-    crawler = GoogleImageCrawler(storage={"root_dir": output_dir})
+    if engine == "bing":
+        crawler = BingImageCrawler(storage={"root_dir": output_dir})
+    else:
+        crawler = GoogleImageCrawler(storage={"root_dir": output_dir})
+
     crawler.crawl(keyword=prompt, max_num=max_images)
 
     paths = sorted(glob.glob(os.path.join(output_dir, "*")))

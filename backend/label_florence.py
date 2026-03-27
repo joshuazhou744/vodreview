@@ -1,40 +1,42 @@
-import supervision as sv
-from inference.models.yolo_world.yolo_world import YOLOWorld
+from transformers import AutoProcessor, AutoModelForCausalLM
+from PIL import Image
 import os
 import glob
 import yaml
-import cv2
 
-MODEL_ID = "yolo_world/l"
-model = YOLOWorld(model_id=MODEL_ID)
+model = AutoModelForCausalLM.from_pretrained("microsoft/Florence-2-base", trust_remote_code=True)
+processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base", trust_remote_code=True)
 
-def auto_label(image_dir, label, confidence_threshold=0.5, output_dir=None):
+
+def auto_label(image_dir, label, output_dir=None, **kwargs):
     if output_dir is None:
         output_dir = os.path.dirname(image_dir)
-
-    model.set_classes([label])
 
     labels_dir = os.path.join(output_dir, "labels")
     os.makedirs(labels_dir, exist_ok=True)
 
     images = sorted(glob.glob(os.path.join(image_dir, "*")))
     labeled = 0
+
     for img_path in images:
-        img = cv2.imread(img_path)
-        if img is None:
-            continue
-        h, w = img.shape[:2]
-        results = model.infer(img, confidence=confidence_threshold)
-        det = sv.Detections.from_inference(results)
-        if len(det) == 0:
+        img = Image.open(img_path).convert("RGB")
+        w, h = img.size
+
+        prompt = f"<OPEN_VOCABULARY_DETECTION>{label}"
+        inputs = processor(text=prompt, images=img, return_tensors="pt")
+        outputs = model.generate(**inputs, max_new_tokens=1024, num_beams=1)
+        result = processor.batch_decode(outputs, skip_special_tokens=False)[0]
+        parsed = processor.post_process_generation(result, task="<OPEN_VOCABULARY_DETECTION>", image_size=(w, h))
+
+        bboxes = parsed.get("<OPEN_VOCABULARY_DETECTION>", {}).get("bboxes", [])
+        if not bboxes:
             continue
 
-        # write YOLO format label file (bbox and confidence)
         txt_name = os.path.splitext(os.path.basename(img_path))[0] + ".txt"
         txt_path = os.path.join(labels_dir, txt_name)
         with open(txt_path, "w") as f:
-            for xyxy in det.xyxy:
-                x1, y1, x2, y2 = xyxy
+            for bbox in bboxes:
+                x1, y1, x2, y2 = bbox
                 cx = ((x1 + x2) / 2) / w
                 cy = ((y1 + y2) / 2) / h
                 bw = (x2 - x1) / w
@@ -42,14 +44,14 @@ def auto_label(image_dir, label, confidence_threshold=0.5, output_dir=None):
                 f.write(f"0 {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n")
 
         labeled += 1
-    
+
     purged = 0
     for img_path in images:
         txt_name = os.path.splitext(os.path.basename(img_path))[0] + ".txt"
         if not os.path.exists(os.path.join(labels_dir, txt_name)):
             os.remove(img_path)
             purged += 1
-    
+
     print(f"[label] labeled {labeled}/{len(images)} images, purged {purged}")
 
     # make dataset.yaml spec

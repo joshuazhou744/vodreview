@@ -1,20 +1,9 @@
-# simplification using yolo world rather than yolo + clip
-# ** requires a gpu for reasonable performance **
-# uses requirements.txt packages
-
 # imports
-import supervision as sv
-from inference.models.yolo_world.yolo_world import YOLOWorld
-
 import json
 import subprocess
 import numpy as np
-import pandas as pd
-import time
 
-MODEL_ID = "yolo_world/l" # model id
-
-model = YOLOWorld(model_id=MODEL_ID)
+from ultralytics import YOLO
 
 # get video info
 def ffprobe_video(path: str) -> dict:
@@ -89,50 +78,25 @@ def format_mmss(seconds: float) -> str:
     minutes, secs = divmod(total, 60)
     return f"{minutes:02d}:{secs:02d}"
 
-def detect_records(
-        label: str,
-        input_video_path: str,
-        fps: float = 2,
-        confidence: float = 0.3,
-        nms: float = 0.3,
-        debug_level: int = 0,
-    ):
-    start = time.perf_counter()
-    if not label:
-        raise ValueError("you must give a valid label string")
-    model.set_classes([label])
-
+def detect_records_yolo(label, input_video_path, weights, fps=1, confidence=0.3):
+    model = YOLO(weights)
     records = []
 
     for raw, w, h, time_s in iter_frames_ffmpeg(input_video_path, fps=fps):
         frame = np.frombuffer(raw, np.uint8).reshape((h, w, 3))
-        # rgb -> bgr shift
-        frame = frame[:, :, ::-1] # (h, w, c) keep all height and width values, reverse the rgb -> bgr
+        frame = frame[:, :, ::-1]  # rgb -> bgr for ultralytics
 
-        results = model.infer(frame, confidence=confidence)
-        det = sv.Detections.from_inference(results).with_nms(nms)
+        results = model(frame, conf=confidence, verbose=False)[0]
 
-        for xyxy, conf in zip(det.xyxy, det.confidence):
+        for box in results.boxes:
+            xyxy = box.xyxy[0].tolist()
             records.append({
                 "label": label,
-                "confidence": float(conf),
-                "bbox": tuple(map(float, xyxy)),
+                "confidence": float(box.conf),
+                "bbox": tuple(xyxy),
                 "timestamp_s": time_s,
                 "timestamp": format_mmss(time_s),
             })
 
-    # print out records sorted by confidence
-    if records and debug_level == 1:
-        # records_df = pd.DataFrame.from_records(records)
-        # print(records_df.sort_values(by=["confidence"], ascending=False))
-        print(time.perf_counter())
-    elif debug_level == 1:
-        print("No detections found.")
-
+    print(f"[detect] found {len(records)} detections")
     return records
-
-# testing
-# if __name__ == "__main__":
-#     classes = ["person"]
-#     input_video_path = "video.mp4"
-#     detect_records(classes, input_video_path, debug_level=1)
