@@ -49,7 +49,7 @@ def iter_frames_ffmpeg(path: str, fps: float = 2):
         "rgb24",
         "pipe:1",
     ]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     if proc.stdout is None:
         raise RuntimeError("ffmpeg stdout pipe was not created")
 
@@ -63,14 +63,7 @@ def iter_frames_ffmpeg(path: str, fps: float = 2):
         idx += 1
 
     proc.stdout.close()
-    
-    # check ffmpeg error
-    stderr = proc.stderr.read()
-    proc.stderr.close()
-    code = proc.wait()
-    if code != 0:
-        err_text = stderr.decode("utf-8", errors="replace")
-        raise RuntimeError(f"ffmpeg failed with code {code}: {err_text}")
+    proc.wait()
 
 # format seconds to mm:ss
 def format_mmss(seconds: float) -> str:
