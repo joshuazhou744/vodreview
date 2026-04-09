@@ -1,6 +1,12 @@
 backend/*.mp4
-backend/yolov8n.pt
+backend/yolo*
 backend/*.csv
+backend/*.jsonl
 backend/.venv
+backend/.env
 backend/__pycache__
 .vscode/
+.DS_Store
+
+runs/
+datasets/

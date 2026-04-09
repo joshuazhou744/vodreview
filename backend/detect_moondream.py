@@ -2,12 +2,30 @@ import os
 import json
 import base64
 import time
+import subprocess
 import requests
 import numpy as np
 from PIL import Image
 from io import BytesIO
 
 from detect import iter_frames_ffmpeg, format_mmss
+
+
+def _video_duration_s(path: str) -> float:
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "json", path,
+    ]
+    out = subprocess.run(cmd, capture_output=True, check=True).stdout
+    return float(json.loads(out)["format"]["duration"])
+
+
+def _format_hms(seconds: float) -> str:
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 # 1. Extract frames using iter_frames_ffmpeg
 # 2. Base64 encode each frame
@@ -21,7 +39,10 @@ def detect_records_moondream(label, input_video_path, fps=1, api_key=None):
         api_key = os.environ.get("MOONDREAM_API_KEY")
     if not api_key:
         raise ValueError("no moondream api key")
-    
+
+    start_wall = time.perf_counter()
+    video_duration = _video_duration_s(input_video_path)
+
     BASE_URL = "https://api.moondream.ai/v1/batch"
     headers = {"X-Moondream-Auth": api_key}
     CHUNK_SIZE = 50 * 1024 * 1024 # 50mb chunks
@@ -111,6 +132,15 @@ def detect_records_moondream(label, input_video_path, fps=1, api_key=None):
                     "timestamp": format_mmss(time_s),
                 })
     print(f"[moondream] found {len(records)} detections")
+
+    elapsed = time.perf_counter() - start_wall
+    ratio = elapsed / video_duration if video_duration > 0 else 0
+    print(
+        f"[moondream] elapsed {_format_hms(elapsed)} | "
+        f"video duration {_format_hms(video_duration)} | "
+        f"{ratio:.2f}x realtime"
+    )
+
     return records
 
 if __name__ == "__main__":
